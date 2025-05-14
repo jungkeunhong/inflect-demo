@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import { Navbar } from "@/components/layout/navbar"; 
 import { ChatContainer } from "@/components/builder/ChatContainer";
@@ -23,41 +24,12 @@ import DetectAgentView from "@/components/visualization/detect-agent-view";
 import PlanAgentView from "@/components/visualization/plan-agent-view";
 import ActAgentView from "@/components/visualization/act-agent-view";
 
-// Create a SearchParams component that uses useSearchParams within a Suspense boundary
-function SearchParamsWrapper({ 
-  children 
-}: { 
-  children: (agentId: string | null) => React.ReactNode 
-}) {
-  const [mounted, setMounted] = useState(false);
-  
-  // Only use import and useSearchParams on the client side
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  
-  if (!mounted) {
-    return null;
-  }
-  
-  // Dynamic import to make it client-side only
-  const ClientComponent = () => {
-    const { useSearchParams } = require('next/navigation');
-    const searchParams = useSearchParams();
-    const agentId = searchParams?.get('agentId');
-    
-    return <>{children(agentId)}</>;
-  };
-  
-  return (
-    <Suspense fallback={<div className="h-screen flex items-center justify-center">Loading...</div>}>
-      <ClientComponent />
-    </Suspense>
-  );
-}
-
-export default function BuilderPage() {
+// Component to handle the search params
+function BuilderPageContent() {
+  const searchParams = useSearchParams();
+  const agentId = searchParams.get('agentId');
   const initializedRef = useRef(false);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [showAgents, setShowAgents] = useState(false);
@@ -66,6 +38,15 @@ export default function BuilderPage() {
   const [toolsRequiringApiKeys, setToolsRequiringApiKeys] = useState<string[]>([]);
   const [enteredApiKeys, setEnteredApiKeys] = useState<Record<string, string>>({});
 
+  useEffect(() => {
+    if (agentId) {
+      const agent = mockAgents.find(a => a.id === agentId);
+      setSelectedAgent(agent || mockAgents[0] || null);
+    } else {
+      setSelectedAgent(mockAgents[0] || null);
+    }
+  }, [agentId]);
+
   const addMessage = useCallback((message: Omit<Message, 'id' | 'createdAt'>) => {
     setMessages((prevMessages) => [
       ...prevMessages,
@@ -73,24 +54,15 @@ export default function BuilderPage() {
     ]);
   }, []);
 
-  const setAgentFromId = useCallback((agentId: string | null) => {
-    if (agentId) {
-      const agent = mockAgents.find(a => a.id === agentId);
-      setSelectedAgent(agent || mockAgents[0] || null);
-    } else {
-      setSelectedAgent(mockAgents[0] || null);
-    }
-  }, []);
-
   useEffect(() => {
-    if (messages.length === 0 && !initializedRef.current) { 
+    if (messages.length === 0 && !agentId && !initializedRef.current) { 
       initializedRef.current = true;
       addMessage(initialUserPrompt);
       setTimeout(() => {
         addMessage(welcomeMessage);
       }, 1000);
     }
-  }, [addMessage, messages.length]);
+  }, [addMessage, messages.length, agentId]);
 
   const proceedToNextDemoStep = useCallback(() => {
     if (currentStep < demoConversationSteps.length && !isLoadingNextStep) {
@@ -266,80 +238,75 @@ export default function BuilderPage() {
     return null; 
   };
 
-  // Render the layout
-  const renderLayout = (agentId: string | null) => {
-    // Set the selectedAgent based on agentId when it changes
-    useEffect(() => {
-      setAgentFromId(agentId);
-    }, [agentId, setAgentFromId]);
-
-    return (
-      <div className="h-screen flex flex-col bg-background">
-        <Navbar />
-        <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
-          <div
-            className={cn(
-              "md:order-2 bg-muted/30 p-4 md:p-6 transition-all duration-500 ease-in-out flex flex-col overflow-y-auto", 
-              showAgents ? "md:w-3/5 lg:w-2/3" : "md:w-0 md:p-0 hidden"
-            )}
-          >
-            {/* Conditional rendering for AgentVisualization and StorylineSequenceView */}
-            {showAgents && (
-              <div className="flex flex-col space-y-6"> 
-                {selectedAgent && ( 
-                  <div className="flex-shrink-0"> 
-                    <AgentVisualization 
-                      agents={mockAgents} 
-                      activeAgent={selectedAgent} 
-                      onAgentClick={(agent) => {
-                        console.log('Agent clicked:', agent.name);
-                        setSelectedAgent(agent); // Set the selected agent when clicked
-                      }} 
-                      isBuilding={true} 
-                      isTesting={false}
-                      onAgentsUpdate={(updatedAgents) => console.log('Agents updated:', updatedAgents)} 
-                    />
-                  </div>
-                )}
-                {/* Agent-specific content */}
-                <div className={selectedAgent ? "flex-grow" : "w-full"}> 
-                  {selectedAgent && selectedAgent.name.includes("Detect") ? (
-                    <DetectAgentView isActive={true} />
-                  ) : selectedAgent && selectedAgent.name.includes("Root") ? (
-                    <StorylineSequenceView isActive={showAgents} />
-                  ) : selectedAgent && selectedAgent.name.includes("Plan") ? (
-                    <PlanAgentView isActive={true} />
-                  ) : selectedAgent && selectedAgent.name.includes("Act") ? (
-                    <ActAgentView isActive={true} />
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div 
-            className={cn(
-              "flex-1 flex flex-col ",
-              "order-2 md:order-1 transition-all duration-500 ease-in-out",
-              showAgents ? "md:w-2/5 lg:w-1/3" : "w-full max-w-2xl mx-auto"
-            )}
-          >
-            <ChatContainer
-              initialMessages={messages} 
-              onSendMessage={handleSendMessage} 
-              placeholder="Describe your automation goal..."
-              chatUIClassName="h-[calc(100vh-150px)] md:h-[calc(100vh-120px)]" 
-              renderMessageContent={renderMessageContent}
-            />
-          </div>
-        </main>
-      </div>
-    );
-  };
-
   return (
-    <SearchParamsWrapper>
-      {(agentId) => renderLayout(agentId)}
-    </SearchParamsWrapper>
+    <div className="h-screen flex flex-col bg-background">
+      <Navbar />
+      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        <div
+          className={cn(
+            "md:order-2 bg-muted/30 p-4 md:p-6 transition-all duration-500 ease-in-out flex flex-col overflow-y-auto", 
+            showAgents ? "md:w-3/5 lg:w-2/3" : "md:w-0 md:p-0 hidden"
+          )}
+        >
+          {/* Conditional rendering for AgentVisualization and StorylineSequenceView */}
+          {showAgents && (
+            <div className="flex flex-col space-y-6"> 
+              {selectedAgent && ( 
+                <div className="flex-shrink-0"> 
+                  <AgentVisualization 
+                    agents={mockAgents} 
+                    activeAgent={selectedAgent} 
+                    onAgentClick={(agent) => {
+                      console.log('Agent clicked:', agent.name);
+                      setSelectedAgent(agent); // Set the selected agent when clicked
+                    }} 
+                    isBuilding={true} 
+                    isTesting={false}
+                    onAgentsUpdate={(updatedAgents) => console.log('Agents updated:', updatedAgents)} 
+                  />
+                </div>
+              )}
+              {/* Agent-specific content */}
+              <div className={selectedAgent ? "flex-grow" : "w-full"}> 
+                {selectedAgent && selectedAgent.name.includes("Detect") ? (
+                  <DetectAgentView isActive={true} />
+                ) : selectedAgent && selectedAgent.name.includes("Root") ? (
+                  <StorylineSequenceView isActive={showAgents} />
+                ) : selectedAgent && selectedAgent.name.includes("Plan") ? (
+                  <PlanAgentView isActive={true} />
+                ) : selectedAgent && selectedAgent.name.includes("Act") ? (
+                  <ActAgentView isActive={true} />
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div 
+          className={cn(
+            "flex-1 flex flex-col ",
+            "order-2 md:order-1 transition-all duration-500 ease-in-out",
+            showAgents ? "md:w-2/5 lg:w-1/3" : "w-full max-w-2xl mx-auto"
+          )}
+        >
+          <ChatContainer
+            initialMessages={messages} 
+            onSendMessage={handleSendMessage} 
+            placeholder="Describe your automation goal..."
+            chatUIClassName="h-[calc(100vh-150px)] md:h-[calc(100vh-120px)]" 
+            renderMessageContent={renderMessageContent}
+          />
+        </div>
+      </main>
+    </div>
+  )
+}
+
+// Main component with Suspense boundary
+export default function BuilderPage() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center">Loading...</div>}>
+      <BuilderPageContent />
+    </Suspense>
   );
 }
